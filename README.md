@@ -9,15 +9,16 @@ This is a coupon-claiming API. The database itself makes sure a campaign never h
 You'll need PHP 8.2 or newer with `pdo_mysql`, Composer 2, and MySQL 8.0.16 or newer (older versions don't enforce `CHECK` constraints). The concurrency tests also need the `pcntl` and `posix` extensions, so you'll have to run them on a Unix-like system. WSL works fine on Windows.
 
 ```bash
-# 1. Create a fresh Laravel 12 app and install Sanctum for token auth
-composer create-project laravel/laravel:^12.0 coupon-system
+# 1. Clone and install dependencies
+git clone https://github.com/NeeleshRealx/coupon-system.git coupon-system
 cd coupon-system
-php artisan install:api --without-migration-prompt
+composer install
 
-# 2. Copy this repository's files over the fresh app (overwrite when asked)
-cp -R /path/to/submission/. .
+# 2. Create your environment file
+cp .env.example .env
+php artisan key:generate
 
-# 3. Point .env at MySQL
+# 3. Point .env at MySQL (set your own user and password)
 #    DB_CONNECTION=mysql
 #    DB_HOST=127.0.0.1
 #    DB_PORT=3306

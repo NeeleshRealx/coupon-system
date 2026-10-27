@@ -67,6 +67,7 @@ curl -s -X POST localhost:8000/api/coupons/redeem -H "Authorization: Bearer $ALI
 curl -s        localhost:8000/api/coupons/my-active -H "Authorization: Bearer $ALICE"
 curl -s -X POST localhost:8000/api/admin/coupon/revoke -H "Authorization: Bearer $ADMIN" -H "Content-Type: application/json" -d '{"claim_id":1,"reason":"Fraud prevention"}'
 ```
+And i have used postman for this and created seperate token for every person like "alice","bob","admin" verified all the api are properly working 
 
 ---
 
@@ -102,9 +103,6 @@ coupons:expire (scheduler, every minute) ──┘   same service, same locking 
 
 I keep the quota in MySQL as a counter on the campaign row, and I only update it while holding that row's lock.
 
-- The claim row and the counter change in one ACID transaction. With Redis `DECR` they'd live in two separate systems. If the database insert failed after the `DECR`, or the process died in between, you'd leak a slot and need compensation logic and a reconciliation job to fix it. Redis can also lose recent writes during a failover.
-- The database already has to enforce correctness through the unique index and the CHECK constraint. Adding Redis would give you one more system to keep in sync.
-- The throughput is plenty for this scale. A claim transaction holds the campaign lock for a few milliseconds, so one campaign can handle hundreds of claims per second. A "first 100 users" campaign sells out in well under a second either way.
 
 I'd bring in Redis for very large flash sales, say 100k+ requests per second on one campaign. In that setup it would sit in front of the database as a gate. An atomic Lua script decrements the counter only while it's positive, so most losing requests get turned away before they reach MySQL. The winners then go through the normal transactional claim. The database constraints still have the final say, and a periodic job resets the Redis counter from `campaigns.claimed_quantity`.
 
@@ -112,15 +110,8 @@ I'd bring in Redis for very large flash sales, say 100k+ requests per second on 
 
 I use pessimistic locking (`SELECT … FOR UPDATE`) wherever contention is high, and database constraints act as a safety net behind it.
 
-| Operation | Lock(s) | Why |
-|---|---|---|
-| claim | campaign row | Hundreds of requests hit the same row. With optimistic locking (a version column plus retries), almost every request would fail and retry over and over. Waiting in line for a row lock is fair and cheap. |
-| redeem | claim row only | This makes the impatient user's repeat requests and the scheduler take turns on that one claim. Redeem doesn't touch the counter, so it doesn't need the campaign lock. |
-| cancel / revoke / expire | campaign, then claim (then redemption) | These change the counter, so they need the campaign lock. |
 
-These rules keep it safe:
-
-1. Locks are always taken in the same order: campaign, then claim, then redemption. No transaction ever waits for a lock in the reverse order, so deadlock cycles can't form.
+1. Locks are always taken in the same order: campaign, then claim, then redemption. No transaction ever waits for a lock in the reverse order, so these locks will not generate.
 2. Every transaction starts with its locking read. Under MySQL's default `REPEATABLE READ`, plain `SELECT`s read from a snapshot taken at the first plain read. Taking the lock first means that snapshot already includes everything committed before the lock was granted. For example, the impatient user's second request has to see the redemption the first one just made.
 3. State is checked again after the lock is held. Anything read before the lock is treated as stale.
 4. Database constraints are the last line of defence, and any violation comes back as a `409`. You won't get a `500` from them.
